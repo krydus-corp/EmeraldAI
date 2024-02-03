@@ -1,0 +1,88 @@
+---
+version: "3.7"
+services:
+  ######################### Infrastructure #########################
+  # Database
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - database-data:/data/db
+    networks:
+      - emld
+    profiles:
+      - localdb
+    restart: always
+  # Caching Layer
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - emld
+    restart: always
+
+  ######################### Services #########################
+  portal:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.portal
+    image: 365611332576.dkr.ecr.us-east-1.amazonaws.com/emld-portal:${VERSION}
+    container_name: portal
+    ports:
+      - "443:443"
+    environment:
+      VERSION: ${VERSION}
+      CONFIG_PATH: "s3://emld-configuration-store/config.portal.${CLUSTER_ENV}.yml"
+      # EXPORTER_CONFIG_PATH used when running locally and the exporter lambda func is called directly
+      EXPORTER_CONFIG_PATH: "s3://emld-configuration-store/config.exporter.${CLUSTER_ENV}.yml"
+      CASBIN_PATH: "s3://emld-configuration-store/casbin"
+      JWT_SECRET: ${JWT_SECRET}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      # AWS_LAMBDA_EXECUTION_ENV_LOCAL determines if exporter lambda is called direclty or vis AWS Lambda
+      AWS_LAMBDA_EXECUTION_ENV_LOCAL: ${AWS_LAMBDA_EXECUTION_ENV_LOCAL}
+      S3_USE_ACCELERATE_ENDPOINT: ${S3_USE_ACCELERATE_ENDPOINT}
+      MONGO_URI: ${MONGO_URI}
+      CLUSTER_ENV: ${CLUSTER_ENV}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+    networks:
+      - emld
+    restart: always
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ./migrate -database ${MONGO_URI} || { echo 'migration failed' ; exit 1; }
+        ./emld-portal-svc
+
+  model:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.model
+    image: 365611332576.dkr.ecr.us-east-1.amazonaws.com/emld-model:${VERSION}
+    container_name: model
+    environment:
+      VERSION: ${VERSION}
+      CONFIG_PATH: "s3://emld-configuration-store/config.model.${CLUSTER_ENV}.yml"
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MONGO_URI: ${MONGO_URI}
+      CLUSTER_ENV: ${CLUSTER_ENV}
+    networks:
+      - emld
+    restart: always
+
+networks:
+  emld:
+
+volumes:
+  database-data:

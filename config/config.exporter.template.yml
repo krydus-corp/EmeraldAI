@@ -1,0 +1,11 @@
+
+---
+database:
+  # TODO: For now, this needs to be updated based on local vs. AWS deployment.
+  # TODO: For local deployment, this should point to `MONGO_URI`
+  # TODO: For AWS deployment, this should point to `MONGO_DISCOVERY_URI`
+  url: $MONGO_DISCOVERY_URI
+  timeout_seconds: 5
+
+blob_store:
+  bucket: $USER_DATA_S3_BUCKET

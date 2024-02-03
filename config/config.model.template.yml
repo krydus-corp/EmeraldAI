@@ -1,0 +1,74 @@
+---
+database:
+  url: $MONGO_URI
+  timeout_seconds: 30
+
+blob_store:
+  bucket: $USER_DATA_S3_BUCKET
+
+server:
+  port: :8081
+  debug: true
+  timeout_seconds: 180
+  crt_file: certs/model.crt
+  key_file: certs/model.key
+
+model_service:
+  train_job_queue_name: $SQS_TRAIN
+  endpoint_job_queue_name: $SQS_ENDPOINT
+  batch_job_queue_name: $SQS_BATCH
+  garbage_job_queue_name: $SQS_GARBAGE
+
+  train_worker_config:
+    concurrency: 32
+  endpoint_worker_config:
+    concurrency: 32
+  batch_worker_config:
+    concurrency: 20
+    retry_attempts: 3
+    retry_wait_seconds: 1
+    retry_backoff: true
+  garbage_worker_config:
+    concurrency: 10
+
+
+  endpoint_config:
+    execution_role_arn: "arn:aws:iam::365611332576:role/SageMakerRole"
+    memory_size_mb: 2048 # Max is 6144
+    max_concurrency: 20 # Max is 200
+    resource_env: $CLUSTER_ENV
+
+  train_config:
+    execution_role_arn: "arn:aws:iam::365611332576:role/SageMakerRole"
+    train_image_classification: "811284229777.dkr.ecr.us-east-1.amazonaws.com/image-classification:1"
+    train_image_object_detection: "811284229777.dkr.ecr.us-east-1.amazonaws.com/object-detection:1"
+
+    runtime:
+      max_runtime_seconds: 3600
+      maximum_retry_attempts: 3
+      max_number_training_jobs: 10
+
+    resource:
+      instance_count: 1
+      instance_type: "ml.p3.2xlarge"
+      volume_size_gb: 50
+
+    sendgrid:
+      training_complete_template_id: d-58d1bd6eba33413f81e43e13f6df912f
+      email_source: "it@emeraldai-dev.com"
+      email_subject: "Training complete for Emerald-AI"
+      training_success_message: "Training completed successfully"
+      training_failed_message: "Training failed"
+
+  garbage_config:
+    enable_garbage_collection: false
+    remove_endpoints_after_days_unused: 3
+    collection_cycle_wait_time_minutes: 600 # minutes
+    resource_env: $CLUSTER_ENV
+
+log:
+  enable_console: true
+  enable_file: false
+  json_format: true
+  level: debug
+  file_location: ""

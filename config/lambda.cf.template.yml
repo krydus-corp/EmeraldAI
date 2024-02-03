@@ -1,0 +1,156 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Emerald Lambda Stack
+
+Resources:
+  EmldNetwork:
+    Properties:
+      GroupDescription: emerald-dev Security Group for emld network
+      Tags:
+      - Key: com.docker.compose.project
+        Value: emerald-dev
+      - Key: com.docker.compose.network
+        Value: emerald-dev_emld
+      VpcId: vpc-a03bc5dd
+    Type: AWS::EC2::SecurityGroup
+
+  # Exporter
+  ExporterSqsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${SQS_EXPORTER}
+      VisibilityTimeout: 900
+      FifoQueue: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ExporterSqsDeadLetterQueue.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Name
+          Value: exporter
+        - Key: environment
+          Value: ${CLUSTER_ENV}
+        - Key: owner
+          Value: ${OWNER}
+
+  ExporterSqsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${SQS_EXPORTER_DLQ}
+      VisibilityTimeout: 15
+      FifoQueue: true
+      Tags:
+        - Key: Name
+          Value: exporter_dlq
+        - Key: environment
+          Value: ${CLUSTER_ENV}
+        - Key: owner
+          Value: ${OWNER}
+
+  ExporterLambdaWorker:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      FunctionName: exporter-${CLUSTER_ENV}
+      Handler: exporter
+      CodeUri: ../../cmd/emld-exporter-svc/worker
+      Runtime: go1.x
+      Timeout: 900 # 15 min
+      MemorySize: 1024
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - x86_64
+      Events:
+        SqsTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ExporterSqsQueue.Arn
+      Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+        Variables:
+          QUEUE_URL: !Ref ExporterSqsQueue
+          EXPORTER_CONFIG_PATH: 's3://emld-configuration-store/config.exporter.${CLUSTER_ENV}.yml'
+      VpcConfig:
+        SecurityGroupIds:
+        - Ref: EmldNetwork
+        SubnetIds:
+        - subnet-7e57fe5f
+        - subnet-939ffb9d
+        - subnet-5488fa19
+        - subnet-ecbe1c8a
+        - subnet-e88b7ad9
+        - subnet-c2eb459d
+
+  ExporterLambdaError:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: exporter-error-handler-${CLUSTER_ENV}
+      Handler: error
+      CodeUri: ../../cmd/emld-exporter-svc/error
+      Runtime: go1.x
+      Timeout: 15
+      MemorySize: 1024
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - x86_64
+      Events:
+        SqsTrigger:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ExporterSqsDeadLetterQueue.Arn
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref ExporterSqsDeadLetterQueue
+          EXPORTER_CONFIG_PATH: 's3://emld-configuration-store/config.exporter.${CLUSTER_ENV}.yml'
+      VpcConfig:
+        SecurityGroupIds:
+        - Ref: EmldNetwork
+        SubnetIds:
+        - subnet-7e57fe5f
+        - subnet-939ffb9d
+        - subnet-5488fa19
+        - subnet-ecbe1c8a
+        - subnet-e88b7ad9
+        - subnet-c2eb459d
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal: {Service: [lambda.amazonaws.com]}
+          Action: ['sts:AssumeRole']
+      Path: /
+      ManagedPolicyArns:
+      - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      - "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+      - "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+      - "arn:aws:iam::aws:policy/service-role/AmazonS3ObjectLambdaExecutionRolePolicy"
+      - "arn:aws:iam::aws:policy/CloudWatchLambdaInsightsExecutionRolePolicy"
+      - "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
+      Policies:
+      - PolicyName: S3Policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+                - 's3:DeleteObject'
+                - 's3:PutObjectAcl'
+                - 's3:GetObjectAcl'
+              Resource:
+                - "arn:aws:s3:::${USER_DATA_S3_BUCKET}/*"
+                - "arn:aws:s3:::${USER_DATA_S3_BUCKET}"
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+              Resource: "arn:aws:s3:::emld-configuration-store/*"
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+                - 's3:PutAccelerateConfiguration'
+                - 's3:GetAccelerateConfiguration'
+              Resource: "arn:aws:s3:::${USER_DATA_S3_BUCKET}"

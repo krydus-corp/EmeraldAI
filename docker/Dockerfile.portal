@@ -1,0 +1,18 @@
+FROM emerald/builder as builder
+FROM alpine
+
+WORKDIR /app
+
+COPY --from=builder /go/bin/emld-portal-svc /app
+COPY --from=builder /go/bin/migrate /app
+
+# RBAC policies
+COPY config/casbin/ /app/casbin/
+
+# Copy certs
+COPY certs/localhost.crt ./certs/localhost.crt
+COPY certs/localhost.key ./certs/localhost.key
+
+RUN touch config.portal.yml
+
+ENTRYPOINT [ "./emld-portal-svc" ]

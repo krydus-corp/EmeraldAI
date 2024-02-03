@@ -1,0 +1,53 @@
+---
+database:
+  url: $MONGO_URI
+  timeout_seconds: 30
+
+cache:
+  host: redis
+  port: 6379
+
+blob_store:
+  bucket: $USER_DATA_S3_BUCKET
+  concurrency: 20
+  partsize: 5242880 # 1024 * 1024 * 5
+  create_bucket_if_not_exists: true
+
+server:
+  port: :443
+  debug: true
+  timeout_seconds: 3600 # 1 Hour
+  rbac_model_file: "/app/casbin/model.conf"
+  rbac_policy_file: "/app/casbin/policy.csv"
+  domain: $CLUSTER_ENV.emeraldai-dev.com
+  cert_cache_s3_bucket: emld-configuration-store
+  crt_file: certs/localhost.crt
+  key_file: certs/localhost.key
+
+jwt:
+  access_duration_minutes: 60 # 1 hour
+  refresh_duration_minutes: 300 # 5 hours
+  auto_logoff_duration_minutes: 30 # 30 min
+  signing_algorithm: HS256
+  min_secret_length: 64
+
+application:
+  min_password_strength: 1
+  sendgrid_password_reset_template_id: d-3ae0eb9f16de46a5bb2def5a43e8cfca
+  sendgrid_email_confirm_template_id: d-fba5ebfa99344c9a9ff906d93eaae71b
+  password_reset_expiration: 300
+  password_reset_email: "it@emeraldai-dev.com"
+  password_reset_subject: "Password Reset for Emerald-AI"
+  # SQS queues
+  export_job_queue_name: $SQS_EXPORTER
+  train_job_queue_name: $SQS_TRAIN
+  endpoint_job_queue_name: $SQS_ENDPOINT
+  batch_job_queue_name: $SQS_BATCH
+  garbage_job_queue_name: $SQS_GARBAGE
+
+log:
+  enable_console: true
+  enable_file: false
+  json_format: true
+  level: debug
+  file_location: ""

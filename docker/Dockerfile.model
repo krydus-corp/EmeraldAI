@@ -1,0 +1,13 @@
+FROM emerald/builder as builder
+FROM alpine
+
+WORKDIR /app
+
+COPY --from=builder /go/bin/emld-model-svc /app
+RUN touch config.model.yml
+
+# Copy certs
+COPY certs/model.crt ./certs/model.crt
+COPY certs/model.key ./certs/model.key
+
+ENTRYPOINT [ "./emld-model-svc" ]

@@ -1,0 +1,215 @@
+---
+version: "3.7"
+services:
+  ######################### Infrastructure #########################
+
+# Database
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 30Gb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - database-data:/data/db
+    networks:
+      - emld
+    profiles:
+      - localdb
+
+  # Caching Layer
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks:
+      - emld
+
+  ######################### Services #########################
+
+  # Portal Service (API)
+  portal:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.portal
+    image: 365611332576.dkr.ecr.us-east-1.amazonaws.com/emld-portal:${VERSION}
+    container_name: portal
+
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 262140
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 30Gb
+    ports:
+      - "443:443/TCP"
+    environment:
+      VERSION: ${VERSION}
+      CONFIG_PATH: "s3://emld-configuration-store/config.portal.${CLUSTER_ENV}.yml"
+      EXPORTER_CONFIG_PATH: "s3://emld-configuration-store/config.exporter.${CLUSTER_ENV}.yml"
+      CASBIN_PATH: "s3://emld-configuration-store/casbin"
+      JWT_SECRET: ${JWT_SECRET}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_LAMBDA_EXECUTION_ENV_LOCAL: ${AWS_LAMBDA_EXECUTION_ENV_LOCAL}
+      S3_USE_ACCELERATE_ENDPOINT: ${S3_USE_ACCELERATE_ENDPOINT}
+      MONGO_URI: ${MONGO_URI}
+      CLUSTER_ENV: ${CLUSTER_ENV}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+    networks:
+      - emld
+    entrypoint: ["/bin/sh", "-c"]
+    # clear localhost certs for production
+    command:
+      - |
+        rm -rf ./certs/*
+        ./migrate -database ${MONGO_URI} || { echo 'migration failed' ; exit 1; }
+        ./emld-portal-svc
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: emld
+        awslogs-stream-prefix: emld.${CLUSTER_ENV}
+    x-aws-role:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_EXPORTER}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_TRAIN}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_ENDPOINT}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_BATCH}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_GARBAGE}"
+
+  # Model Servie (AI/ML)
+  model:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.model
+    image: 365611332576.dkr.ecr.us-east-1.amazonaws.com/emld-model:${VERSION}
+    container_name: model
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 30Gb
+    environment:
+      VERSION: ${VERSION}
+      CONFIG_PATH: "s3://emld-configuration-store/config.model.${CLUSTER_ENV}.yml"
+      CLUSTER_ENV: ${CLUSTER_ENV}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      MONGO_URI: ${MONGO_URI}
+    networks:
+      - emld
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: emld
+        awslogs-stream-prefix: emld.${CLUSTER_ENV}
+    x-aws-role:
+      Version: "2012-10-17"
+      Statement:
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_TRAIN}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_ENDPOINT}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_BATCH}"
+        - Effect: Allow
+          Action: sqs:*
+          Resource: "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${SQS_GARBAGE}"
+networks:
+  emld:
+
+volumes:
+  database-data:
+
+# ------------------ Cloudformation Resources ------------------ #
+x-aws-cloudformation:
+  Resources:
+    # User data S3 bucket
+    UserDataBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        AccelerateConfiguration:
+          AccelerationStatus: ${USER_DATA_S3_BUCKET_ACC}
+        BucketName: ${USER_DATA_S3_BUCKET}
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        Tags:
+          - Key: environment
+            Value: ${CLUSTER_ENV}
+          - Key: owner
+            Value: ${OWNER}
+
+    # Model Service queues
+    ModelTrainQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${SQS_TRAIN}
+        Tags:
+          - Key: environment
+            Value: ${CLUSTER_ENV}
+          - Key: owner
+            Value: ${OWNER}
+
+    ModelEndpointQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${SQS_ENDPOINT}
+        Tags:
+          - Key: environment
+            Value: ${CLUSTER_ENV}
+          - Key: owner
+            Value: ${OWNER}
+    ModelBatchQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${SQS_BATCH}
+        Tags:
+          - Key: environment
+            Value: ${CLUSTER_ENV}
+          - Key: owner
+            Value: ${OWNER}
+    ModelGarbageQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: ${SQS_GARBAGE}
+        Tags:
+          - Key: environment
+            Value: ${CLUSTER_ENV}
+          - Key: owner
+            Value: ${OWNER}

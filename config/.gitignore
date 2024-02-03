@@ -1,0 +1,8 @@
+config.*.yml
+!config.*.template.yml
+
+.env**
+!.env.example
+
+lambda.**
+!lambda.*.template.yml

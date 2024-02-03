@@ -1,0 +1,52 @@
+@startuml emerald
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title Container diagram for Emerald System
+
+AddElementTag("micro service", $shape=EightSidedShape(), $bgColor="CornflowerBlue", $fontColor="white")
+AddElementTag("storage", $shape=RoundedBoxShape(), $bgColor="lightSkyBlue", $fontColor="white")
+
+SHOW_PERSON_OUTLINE()
+
+Person(customer, Customer, "A customer")
+
+System_Ext(sqs, "AWS SQS", "Transport for events")
+System_Ext(s3, "AWS S3", "BLOB store")
+System_Ext(lambda_exporter, "AWS Lambda (exports)", "Async task manager for exports")
+
+System_Boundary(c1, "Emerald") {
+    Container(app, "Customer Application", "Javascript, React", "Allows customers to create AI")
+    Container(portal_service, "Portal Service", "Go", "Emerald API", $tags = "micro service")
+    Container(exporter_service, "Exporter Service", "Go", "Exports content from the system", $tags = "micro service")
+    Container(model_service, "Model Service", "Go", "Handles buisiness logic around model training and serving", $tags = "micro service")
+    ContainerDb(db, "Database", "MongoDB", "Stores a normalized version of all business data", $tags = "storage")
+    ContainerDb(cache, "Cache", "Redis", "Stores authentication session information", $tags = "storage")
+}
+
+' Customer Relationships
+Rel_D(customer, app, "Uses", "HTTPS")
+Rel_D(customer, portal_service, "Uses", "HTTPS")
+
+' Model Relationships
+Rel(model_service, db,  "Stores inference results and model metadata", "TCP/IP")
+Rel_L(model_service, portal_service,  "Inferencing requests", "HTTPS")
+
+' Portal Relationships
+Rel(portal_service, model_service, "Proxies inference and model requests", "HTTP")
+Rel(portal_service, cache, "Caches JWT access token", "TCP/IP")
+Rel(portal_service, sqs, "Sends async staging and export requests", "HTTPS")
+Rel(portal_service, s3, "Uploads and serves content", "HTTPS")
+Rel(portal_service, db, "Manages user data", "TCP/IP")
+
+' Exporter Relationships
+Rel(sqs, exporter_service, "Recieves async export requests", "HTTPS")
+Rel(sqs, lambda_exporter, "Export execution", "TCP/IP")
+Rel(exporter_service, s3, "Stores exports", "HTTPS")
+Rel(s3, exporter_service, "Fetches content", "HTTPS")
+
+' Application Relationships
+Rel(app, portal_service, "Manages user data using", "HTTP")
+
+
+SHOW_LEGEND()
+@enduml
